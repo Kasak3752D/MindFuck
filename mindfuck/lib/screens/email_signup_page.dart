@@ -5,7 +5,6 @@ import 'package:mindfuck/screens/home_screen.dart';
 
 class EmailSignupPage extends StatefulWidget {
   const EmailSignupPage({super.key});
-
   @override
   State<EmailSignupPage> createState() => _EmailSignupPageState();
 }
@@ -15,17 +14,14 @@ class _EmailSignupPageState extends State<EmailSignupPage> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   bool loading = false;
-
   Future<void> signup() async {
     try {
       setState(() => loading = true);
-
       UserCredential result = await FirebaseAuth.instance
           .createUserWithEmailAndPassword(
             email: emailController.text.trim(),
             password: passwordController.text.trim(),
           );
-
       await FirebaseFirestore.instance
           .collection('users')
           .doc(result.user!.uid)
@@ -36,7 +32,6 @@ class _EmailSignupPageState extends State<EmailSignupPage> {
             "hasTeam": false,
             "createdAt": FieldValue.serverTimestamp(),
           });
-
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const HomeScreen()),
@@ -65,21 +60,18 @@ class _EmailSignupPageState extends State<EmailSignupPage> {
         child: Column(
           children: [
             const SizedBox(height: 60),
-
             TextField(
               controller: nameController,
               style: const TextStyle(color: Colors.white),
               decoration: inputBox("Username"),
             ),
             const SizedBox(height: 16),
-
             TextField(
               controller: emailController,
               style: const TextStyle(color: Colors.white),
               decoration: inputBox("Email"),
             ),
             const SizedBox(height: 16),
-
             TextField(
               controller: passwordController,
               obscureText: true,
@@ -87,7 +79,6 @@ class _EmailSignupPageState extends State<EmailSignupPage> {
               decoration: inputBox("Password"),
             ),
             const SizedBox(height: 24),
-
             ElevatedButton(
               onPressed: loading ? null : signup,
               child: loading

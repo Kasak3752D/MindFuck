@@ -5,7 +5,6 @@ import 'package:mindfuck/screens/email_signup_page.dart';
 
 class EmailLoginPage extends StatefulWidget {
   const EmailLoginPage({super.key});
-
   @override
   State<EmailLoginPage> createState() => _EmailLoginPageState();
 }
@@ -14,16 +13,13 @@ class _EmailLoginPageState extends State<EmailLoginPage> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   bool loading = false;
-
   Future<void> login() async {
     try {
       setState(() => loading = true);
-
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: emailController.text.trim(),
         password: passwordController.text.trim(),
       );
-
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const HomeScreen()),
@@ -58,14 +54,12 @@ class _EmailLoginPageState extends State<EmailLoginPage> {
               style: TextStyle(color: Colors.white, fontSize: 24),
             ),
             const SizedBox(height: 20),
-
             TextField(
               controller: emailController,
               style: const TextStyle(color: Colors.white),
               decoration: inputBox("Email"),
             ),
             const SizedBox(height: 16),
-
             TextField(
               controller: passwordController,
               obscureText: true,
@@ -73,16 +67,13 @@ class _EmailLoginPageState extends State<EmailLoginPage> {
               decoration: inputBox("Password"),
             ),
             const SizedBox(height: 20),
-
             ElevatedButton(
               onPressed: loading ? null : login,
               child: loading
                   ? const CircularProgressIndicator(color: Colors.white)
                   : const Text("Login"),
             ),
-
             const Spacer(),
-
             Center(
               child: TextButton(
                 onPressed: () {

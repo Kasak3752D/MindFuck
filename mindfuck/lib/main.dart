@@ -11,7 +11,6 @@ void main() async {
 
 class MindfuckApp extends StatelessWidget {
   const MindfuckApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
