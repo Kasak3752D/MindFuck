@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
-import 'screens/home_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:mindfuck/screens/email_login_page.dart';
+import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const MindfuckApp());
 }
 
@@ -17,7 +18,7 @@ class MindfuckApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Mindfuck',
       theme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
-      home: const HomeScreen(),
+      home: EmailLoginPage(),
     );
   }
 }
