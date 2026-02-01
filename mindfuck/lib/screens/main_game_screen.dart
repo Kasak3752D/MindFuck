@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:async'; // Required for StreamSubscription
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -16,16 +17,22 @@ class _MainGameScreenState extends State<MainGameScreen>
   final DatabaseReference ref = FirebaseDatabase.instance.ref();
   final String? myUid = FirebaseAuth.instance.currentUser?.uid;
 
+  // FIX 1: Track subscription to cancel it and avoid "setState after dispose"
+  StreamSubscription? _gameSubscription;
+
   // Game State
   int gameTimer = 0;
   bool isChoosingPower = false;
   bool isSwapping = false;
   bool isAnimatingSwap = false;
+  bool isAnimatingToDiscard = false;
   Offset targetSwapOffset = Offset.zero;
+  String? swappingHandCard;
 
   final List<double> edgeAngles = [0, 60, 120, 180, 240, 300];
   List<String> usernames = [];
   List<String> deck = [];
+  List<String> discardPile = [];
   String? drawnCard;
   int currentTurnIndex = 0;
   bool isMyTurn = false;
@@ -38,30 +45,38 @@ class _MainGameScreenState extends State<MainGameScreen>
     _loadGameData();
   }
 
+  @override
+  void dispose() {
+    // FIX 2: Cancel listener when leaving the screen
+    _gameSubscription?.cancel();
+    super.dispose();
+  }
+
   void _loadGameData() {
     final roomRef = ref.child('rooms').child(widget.roomCode);
-    roomRef.onValue.listen((event) {
-      if (event.snapshot.value == null) return;
+    _gameSubscription = roomRef.onValue.listen((event) {
+      // FIX 3: Check if still mounted before updating UI
+      if (!mounted || event.snapshot.value == null) return;
+
       final data = Map<String, dynamic>.from(event.snapshot.value as Map);
       final playersMap = Map<String, dynamic>.from(data['players']);
       final fetchedUsernames = playersMap.values
           .map((p) => p['name'].toString())
           .toList();
 
-      if (mounted) {
-        setState(() {
-          playersData = playersMap;
-          gameTimer = data['gameDuration'] ?? 0;
-          currentTurnIndex = data['turnIndex'] ?? 0;
-          usernames = fetchedUsernames;
-          deck = List<String>.from(data['deck'] ?? []);
+      setState(() {
+        playersData = playersMap;
+        gameTimer = data['gameDuration'] ?? 0;
+        currentTurnIndex = data['turnIndex'] ?? 0;
+        usernames = fetchedUsernames;
+        deck = List<String>.from(data['deck'] ?? []);
+        discardPile = List<String>.from(data['discardPile'] ?? []);
 
-          if (myUid != null && playersMap.containsKey(myUid)) {
-            isMyTurn =
-                fetchedUsernames[currentTurnIndex] == playersMap[myUid]['name'];
-          }
-        });
-      }
+        if (myUid != null && playersMap.containsKey(myUid)) {
+          isMyTurn =
+              fetchedUsernames[currentTurnIndex] == playersMap[myUid]['name'];
+        }
+      });
     });
   }
 
@@ -70,10 +85,13 @@ class _MainGameScreenState extends State<MainGameScreen>
     List<String> newDeck = List.from(deck);
     String card = newDeck.removeLast();
     await ref.child('rooms').child(widget.roomCode).update({'deck': newDeck});
-    setState(() {
-      drawnCard = card;
-      showDrawnCard = true;
-    });
+
+    if (mounted) {
+      setState(() {
+        drawnCard = card;
+        showDrawnCard = true;
+      });
+    }
   }
 
   void _handleAction(String action) {
@@ -82,19 +100,41 @@ class _MainGameScreenState extends State<MainGameScreen>
     int rankValue = _getRankValue(rankStr);
 
     if (action == "Throw") {
-      if (rankValue >= 7) {
+      if (rankValue >= 7 && !isChoosingPower) {
         setState(() => isChoosingPower = true);
       } else {
-        _finishTurn();
+        _performThrowAnimation();
       }
     } else if (action == "Swap") {
       setState(() {
         isSwapping = true;
         showDrawnCard = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Tap one of your cards to swap!")),
-      );
+    }
+  }
+
+  Future<void> _performThrowAnimation() async {
+    setState(() {
+      isChoosingPower = false;
+      isAnimatingToDiscard = true;
+    });
+
+    await Future.delayed(const Duration(milliseconds: 600));
+
+    if (drawnCard != null && mounted) {
+      List<String> newDiscard = List.from(discardPile);
+      newDiscard.add(drawnCard!);
+      await ref.child('rooms').child(widget.roomCode).update({
+        'discardPile': newDiscard,
+      });
+    }
+
+    if (mounted) {
+      setState(() {
+        isAnimatingToDiscard = false;
+        showDrawnCard = false;
+      });
+      _finishTurn();
     }
   }
 
@@ -108,21 +148,30 @@ class _MainGameScreenState extends State<MainGameScreen>
 
   Future<void> _performSwap(int cardIndex, double angle, double radius) async {
     if (myUid == null || drawnCard == null) return;
-
-    // Calculate Animation Target
     final double edgeRad = angle * pi / 180;
     final Offset normal = Offset(cos(edgeRad + pi / 2), sin(edgeRad + pi / 2));
 
+    List<dynamic> currentHand = List.from(playersData[myUid]['hand'] ?? []);
+    String cardToReturnToDeck = currentHand[cardIndex];
+
     setState(() {
       isAnimatingSwap = true;
+      swappingHandCard = cardToReturnToDeck;
       targetSwapOffset = normal * (radius + 45);
     });
 
-    await Future.delayed(const Duration(milliseconds: 600));
+    await Future.delayed(const Duration(milliseconds: 800));
 
-    // Firebase Update
-    List<dynamic> currentHand = List.from(playersData[myUid]['hand'] ?? []);
-    currentHand[cardIndex] = drawnCard;
+    if (!mounted) return;
+
+    currentHand[cardIndex] = drawnCard!;
+    List<String> updatedDeck = List.from(deck);
+    updatedDeck.add(cardToReturnToDeck);
+    updatedDeck.shuffle();
+
+    await ref.child('rooms').child(widget.roomCode).update({
+      'deck': updatedDeck,
+    });
     await ref
         .child('rooms')
         .child(widget.roomCode)
@@ -130,21 +179,28 @@ class _MainGameScreenState extends State<MainGameScreen>
         .child(myUid!)
         .update({'hand': currentHand});
 
-    setState(() => isAnimatingSwap = false);
+    setState(() {
+      isAnimatingSwap = false;
+      isSwapping = false;
+      swappingHandCard = null;
+    });
     _finishTurn();
   }
 
   Future<void> _finishTurn() async {
-    setState(() {
-      showDrawnCard = false;
-      drawnCard = null;
-      isChoosingPower = false;
-      isSwapping = false;
-    });
     int nextTurn = (currentTurnIndex + 1) % usernames.length;
     await ref.child('rooms').child(widget.roomCode).update({
       'turnIndex': nextTurn,
     });
+
+    if (mounted) {
+      setState(() {
+        showDrawnCard = false;
+        drawnCard = null;
+        isChoosingPower = false;
+        isSwapping = false;
+      });
+    }
   }
 
   @override
@@ -152,6 +208,10 @@ class _MainGameScreenState extends State<MainGameScreen>
     final Size screen = MediaQuery.of(context).size;
     final double hexSize = screen.width * 0.58;
     final double hexRadius = hexSize / 2.15;
+    final Offset discardTarget = Offset(
+      screen.width * 0.35,
+      screen.height * 0.4,
+    );
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -173,6 +233,7 @@ class _MainGameScreenState extends State<MainGameScreen>
       body: Stack(
         alignment: Alignment.center,
         children: [
+          // FIX 4: Put the deck inside the main stack directly so it isn't blocked by other stacks
           Center(
             child: Stack(
               alignment: Alignment.center,
@@ -191,25 +252,54 @@ class _MainGameScreenState extends State<MainGameScreen>
                         (myUid != null &&
                         playersData[myUid]?['name'] == usernames[i]),
                   ),
-                _deckWidget(),
-                // SWAP ANIMATION LAYER
-                if (isAnimatingSwap && drawnCard != null)
-                  TweenAnimationBuilder<Offset>(
-                    duration: const Duration(milliseconds: 500),
-                    curve: Curves.easeOutCubic,
-                    tween: Tween<Offset>(
-                      begin: Offset.zero,
-                      end: targetSwapOffset,
-                    ),
-                    builder: (context, offset, child) => Transform.translate(
-                      offset: offset,
-                      child: _smallCardVisual(drawnCard!, isFaceUp: true),
-                    ),
-                  ),
+                _deckWidget(), // Deck is now inside the center stack for better touch detection
               ],
             ),
           ),
-          if (showDrawnCard && drawnCard != null) _drawnCardOverlay(),
+
+          // ANIMATIONS
+          if (isAnimatingSwap && drawnCard != null) ...[
+            TweenAnimationBuilder<Offset>(
+              duration: const Duration(milliseconds: 700),
+              curve: Curves.easeInOutBack,
+              tween: Tween<Offset>(begin: Offset.zero, end: targetSwapOffset),
+              builder: (context, offset, child) => Transform.translate(
+                offset: offset,
+                child: _smallCardVisual(drawnCard!, isFaceUp: true),
+              ),
+            ),
+            TweenAnimationBuilder<Offset>(
+              duration: const Duration(milliseconds: 700),
+              curve: Curves.easeInOutBack,
+              tween: Tween<Offset>(begin: targetSwapOffset, end: Offset.zero),
+              builder: (context, offset, child) => Transform.translate(
+                offset: offset,
+                child: Opacity(
+                  opacity: 0.7,
+                  child: _smallCardVisual(
+                    swappingHandCard ?? "",
+                    isFaceUp: false,
+                  ),
+                ),
+              ),
+            ),
+          ],
+
+          Positioned(bottom: 40, right: 40, child: _discardPileWidget()),
+
+          if (showDrawnCard && drawnCard != null && !isAnimatingToDiscard)
+            _drawnCardOverlay(),
+
+          if (isAnimatingToDiscard && drawnCard != null)
+            TweenAnimationBuilder<Offset>(
+              duration: const Duration(milliseconds: 500),
+              curve: Curves.easeInBack,
+              tween: Tween<Offset>(begin: Offset.zero, end: discardTarget),
+              builder: (context, offset, child) => Transform.translate(
+                offset: offset,
+                child: _smallCardVisual(drawnCard!, isFaceUp: true),
+              ),
+            ),
         ],
       ),
     );
@@ -217,30 +307,110 @@ class _MainGameScreenState extends State<MainGameScreen>
 
   Widget _deckWidget() {
     return GestureDetector(
+      // FIX 5: Use HitTestBehavior.opaque to capture all taps
+      behavior: HitTestBehavior.opaque,
       onTap: () {
-        if (isMyTurn && deck.isNotEmpty && !showDrawnCard && !isSwapping)
+        if (isMyTurn && !showDrawnCard && !isSwapping && !isAnimatingSwap) {
           _drawFromDeck();
+        }
       },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 400),
-        height: 80,
-        width: 60,
+      child: Container(
+        padding: const EdgeInsets.all(10), // Larger hit area
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 400),
+          height: 80,
+          width: 60,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(6),
+            image: const DecorationImage(
+              image: AssetImage('lib/assets/images/card_back.jpeg'),
+              fit: BoxFit.cover,
+            ),
+            boxShadow: isMyTurn && !showDrawnCard
+                ? [
+                    const BoxShadow(
+                      color: Colors.white,
+                      blurRadius: 25,
+                      spreadRadius: 4,
+                    ),
+                  ]
+                : [],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- Helper UI Widgets ---
+  Widget _discardPileWidget() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          "DISCARD",
+          style: TextStyle(color: Colors.white54, fontSize: 10),
+        ),
+        const SizedBox(height: 5),
+        Container(
+          height: 65,
+          width: 45,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: discardPile.isNotEmpty
+              ? _smallCardVisual(discardPile.last, isFaceUp: true)
+              : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _smallCardVisual(String card, {bool isFaceUp = false}) {
+    if (!isFaceUp || card.isEmpty) {
+      return Container(
+        height: 42,
+        width: 28,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(4),
           image: const DecorationImage(
             image: AssetImage('lib/assets/images/card_back.jpeg'),
             fit: BoxFit.cover,
           ),
-          boxShadow: isMyTurn
-              ? [
-                  const BoxShadow(
-                    color: Colors.white,
-                    blurRadius: 25,
-                    spreadRadius: 4,
-                  ),
-                ]
-              : [],
         ),
+      );
+    }
+    final rank = card.substring(0, card.length - 1);
+    final suit = card.substring(card.length - 1);
+    final symbol = {'S': '♠', 'H': '♥', 'D': '♦', 'C': '♣'}[suit] ?? '';
+    final isRed = suit == 'H' || suit == 'D';
+    return Container(
+      height: 42,
+      width: 28,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            rank,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: isRed ? Colors.red : Colors.black,
+            ),
+          ),
+          Text(
+            symbol,
+            style: TextStyle(
+              fontSize: 12,
+              color: isRed ? Colors.red : Colors.black,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -249,18 +419,22 @@ class _MainGameScreenState extends State<MainGameScreen>
     return Container(
       width: double.infinity,
       height: double.infinity,
-      color: Colors.black.withOpacity(0.8),
+      color: Colors.black.withOpacity(0.85),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           _cardFront(drawnCard!),
-          const SizedBox(height: 30),
+          const SizedBox(height: 40),
           if (!isChoosingPower)
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _ovalButton("Throw", () => _handleAction("Throw")),
-                const SizedBox(width: 20),
+                _ovalButton(
+                  "Throw",
+                  () => _handleAction("Throw"),
+                  color: Colors.redAccent,
+                ),
+                const SizedBox(width: 25),
                 _ovalButton("Swap", () => _handleAction("Swap")),
               ],
             )
@@ -268,20 +442,24 @@ class _MainGameScreenState extends State<MainGameScreen>
             Column(
               children: [
                 const Text(
-                  "Use card power?",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  "Use Card Power?",
+                  style: TextStyle(color: Colors.white, fontSize: 20),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 25),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    _ovalButton("Yes", () => _finishTurn()),
+                    _ovalButton(
+                      "Yes",
+                      () => _performThrowAnimation(),
+                      color: Colors.green,
+                    ),
                     const SizedBox(width: 20),
-                    _ovalButton("No, Throw", () => _finishTurn()),
+                    _ovalButton(
+                      "No",
+                      () => _performThrowAnimation(),
+                      color: Colors.grey,
+                    ),
                   ],
                 ),
               ],
@@ -316,10 +494,7 @@ class _MainGameScreenState extends State<MainGameScreen>
             angle: edgeRad,
             child: Text(
               username,
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-              ),
+              style: TextStyle(color: isActive ? Colors.yellow : Colors.white),
             ),
           ),
         ),
@@ -361,7 +536,16 @@ class _MainGameScreenState extends State<MainGameScreen>
         width: 28,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(4),
-          border: highlight ? Border.all(color: Colors.yellow, width: 2) : null,
+          border: highlight ? Border.all(color: Colors.white, width: 2) : null,
+          boxShadow: highlight
+              ? [
+                  const BoxShadow(
+                    color: Colors.white,
+                    blurRadius: 12,
+                    spreadRadius: 3,
+                  ),
+                ]
+              : [],
           image: const DecorationImage(
             image: AssetImage('lib/assets/images/card_back.jpeg'),
             fit: BoxFit.cover,
@@ -371,35 +555,17 @@ class _MainGameScreenState extends State<MainGameScreen>
     );
   }
 
-  Widget _smallCardVisual(String card, {bool isFaceUp = false}) {
-    return Container(
-      height: 42,
-      width: 28,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: isFaceUp
-          ? Center(
-              child: Text(
-                card[0],
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            )
-          : null,
-    );
-  }
-
-  Widget _ovalButton(String text, VoidCallback onTap) {
+  Widget _ovalButton(
+    String text,
+    VoidCallback onTap, {
+    Color color = Colors.yellow,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
         decoration: BoxDecoration(
-          color: Colors.yellow,
+          color: color,
           borderRadius: BorderRadius.circular(30),
         ),
         child: Text(text, style: const TextStyle(fontWeight: FontWeight.bold)),

@@ -15,8 +15,8 @@ class GameScreen extends StatefulWidget {
 class _GameScreenState extends State<GameScreen> {
   final ref = FirebaseDatabase.instance.ref();
 
-  List<String> cards = [];
-  List<String> selected = [];
+  List<String> cards = []; // 4 cards assigned to player
+  List<String> selected = []; // cards picked by player (max 2)
 
   int remaining = 6;
   Timer? timer;
@@ -28,95 +28,37 @@ class _GameScreenState extends State<GameScreen> {
     _loadGame();
   }
 
-  // ================= DECK GENERATOR =================
-
-  List<String> _generateDeck() {
-    const suits = ['S', 'H', 'D', 'C'];
-    const ranks = [
-      'A',
-      '2',
-      '3',
-      '4',
-      '5',
-      '6',
-      '7',
-      '8',
-      '9',
-      '10',
-      'J',
-      'Q',
-      'K',
-    ];
-
-    List<String> d = [];
-
-    for (var s in suits) {
-      for (var r in ranks) {
-        d.add("$r$s");
-      }
-    }
-
-    d.shuffle();
-    return d;
-  }
-
-  // ================= ENSURE DECK IN FIREBASE =================
-
-  Future<void> _ensureDeckExists() async {
-    final roomRef = ref.child('rooms').child(widget.roomCode);
-
-    final snap = await roomRef.child('deck').get();
-
-    if (!snap.exists) {
-      print("Creating deck in Firebase");
-
-      await roomRef.update({'deck': _generateDeck(), 'turnIndex': 0});
-    } else {
-      print("Deck already exists");
-    }
-  }
-
-  // ================= LOAD PLAYER DATA =================
+  // ================= LOAD PLAYER CARDS =================
 
   Future<void> _loadGame() async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final room = ref.child('rooms').child(widget.roomCode);
 
-    // ✅ ensure deck exists first
-    await _ensureDeckExists();
-
     final snap = await room.child('players').child(uid).get();
     final cardData = snap.child('cards').value;
 
     if (cardData != null) {
-      if (cardData is List) {
-        cards = List<String>.from(cardData);
-      } else if (cardData is Map) {
-        cards = cardData.values.map((e) => e.toString()).toList();
-      }
+      cards = List<String>.from(cardData as List);
     }
-
-    print("Cards loaded: $cards");
 
     setState(() {});
   }
 
-  // ================= SAVE CARD ORDER =================
+  // ================= SAVE CARD ORDER (🔥 MAIN LOGIC) =================
 
   Future<void> _saveCardOrder() async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final roomRef = ref.child('rooms').child(widget.roomCode);
 
+    // remaining cards (not picked)
     final remainingCards = cards.where((c) => !selected.contains(c)).toList();
 
     await roomRef.child('players').child(uid).child('cardOrder').set({
-      "1": selected[0],
-      "2": selected[1],
-      "3": remainingCards[0],
-      "4": remainingCards[1],
+      "1": selected[0], // first picked
+      "2": selected[1], // second picked
+      "3": remainingCards[0], // random remaining
+      "4": remainingCards[1], // random remaining
     });
-
-    print("Card order saved");
   }
 
   // ================= TIMER =================
@@ -159,18 +101,16 @@ class _GameScreenState extends State<GameScreen> {
     if (selected.length == 2) {
       _startTimer();
 
+      // 🔥 SAVE ORDERED CARDS
       await _saveCardOrder();
 
       final uid = FirebaseAuth.instance.currentUser!.uid;
-
       await ref
           .child('rooms')
           .child(widget.roomCode)
           .child('players')
           .child(uid)
           .update({'ready': true});
-
-      print("Player marked ready");
     }
   }
 
@@ -208,7 +148,7 @@ class _GameScreenState extends State<GameScreen> {
     final suit = card.substring(card.length - 1);
 
     final isRed = suit == 'H' || suit == 'D';
-    final symbol = {'S': '♠', 'H': '♥', 'D': '♦', 'C': '♣'}[suit]!;
+    final suitSymbol = {'S': '♠', 'H': '♥', 'D': '♦', 'C': '♣'}[suit]!;
 
     return Padding(
       padding: const EdgeInsets.all(10),
@@ -228,7 +168,7 @@ class _GameScreenState extends State<GameScreen> {
           Expanded(
             child: Center(
               child: Text(
-                symbol,
+                suitSymbol,
                 style: TextStyle(
                   fontSize: 60,
                   color: isRed ? Colors.red : Colors.black,
@@ -285,14 +225,11 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
           const SizedBox(height: 24),
-
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: cards.take(2).map(_card).toList(),
           ),
-
           const SizedBox(height: 16),
-
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: cards.skip(2).map(_card).toList(),

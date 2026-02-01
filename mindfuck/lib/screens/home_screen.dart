@@ -104,8 +104,7 @@ class HomeScreen extends StatelessWidget {
 
   // CREATE TEAM
   void _showCreateTeamDialog(BuildContext context) {
-    final TextEditingController durationController =
-        TextEditingController(); // 👈 added
+    final TextEditingController durationController = TextEditingController();
 
     showDialog(
       context: context,
