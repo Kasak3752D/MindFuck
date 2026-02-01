@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:mindfuck/screens/email_login_page.dart';
+
+import 'package:mindfuck/services/auth_gate.dart';
 import 'firebase_options.dart';
 
 void main() async {
@@ -17,7 +18,7 @@ class MindfuckApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Mindfuck',
       theme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
-      home: EmailLoginPage(),
+      home: const AuthGate(),
     );
   }
 }

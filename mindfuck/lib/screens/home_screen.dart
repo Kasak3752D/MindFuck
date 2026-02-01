@@ -40,7 +40,6 @@ class HomeScreen extends StatelessWidget {
                 _dialogTitle('ENTER PRIVATE CODE'),
                 const SizedBox(height: 25),
 
-                // SAME UI – controller added
                 Container(
                   decoration: BoxDecoration(
                     color: Colors.white,
@@ -50,8 +49,10 @@ class HomeScreen extends StatelessWidget {
                   child: TextField(
                     controller: codeController,
                     textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.black, fontSize: 16),
                     decoration: const InputDecoration(
                       hintText: "Enter private code here...",
+                      hintStyle: TextStyle(color: Colors.grey),
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.symmetric(
                         horizontal: 20,
@@ -103,6 +104,9 @@ class HomeScreen extends StatelessWidget {
 
   // CREATE TEAM
   void _showCreateTeamDialog(BuildContext context) {
+    final TextEditingController durationController =
+        TextEditingController(); // 👈 added
+
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -126,17 +130,51 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 15),
-                _buildDashedInput("e.g. 15", true),
+
+                // SAME UI – controller added
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(50),
+                    border: Border.all(color: Colors.red, width: 2),
+                  ),
+                  child: TextField(
+                    controller: durationController,
+                    textAlign: TextAlign.center,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    style: const TextStyle(color: Colors.black, fontSize: 16),
+                    decoration: const InputDecoration(
+                      hintText: "e.g. 15",
+                      hintStyle: TextStyle(color: Colors.grey),
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 15,
+                      ),
+                    ),
+                  ),
+                ),
+
                 const SizedBox(height: 35),
 
                 _buildDialogButton("Generate team code", () async {
                   final code = generateRoomCode();
 
+                  // ✅ DEFAULT TIMER = 15 MINUTES
+                  final int minutes =
+                      int.tryParse(durationController.text) ?? 15;
+
+                  final int durationInSeconds = minutes * 60;
+
                   await FirebaseDatabase.instance
                       .ref()
                       .child('rooms')
                       .child(code)
-                      .set({'status': 'waiting'});
+                      .set({
+                        'status': 'waiting',
+                        'gameDuration': durationInSeconds,
+                      });
 
                   Navigator.pop(context);
 
@@ -178,31 +216,6 @@ class HomeScreen extends StatelessWidget {
         fontSize: 22,
         fontWeight: FontWeight.w900,
         letterSpacing: 1.5,
-      ),
-    );
-  }
-
-  Widget _buildDashedInput(String hint, bool isNumeric) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(50),
-        border: Border.all(color: Colors.red, width: 2),
-      ),
-      child: TextField(
-        textAlign: TextAlign.center,
-        keyboardType: isNumeric ? TextInputType.number : TextInputType.text,
-        inputFormatters: isNumeric
-            ? [FilteringTextInputFormatter.digitsOnly]
-            : [],
-        decoration: InputDecoration(
-          hintText: hint,
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 20,
-            vertical: 15,
-          ),
-        ),
       ),
     );
   }
@@ -282,7 +295,7 @@ class HomeScreen extends StatelessWidget {
               width: width * 0.85,
               icon: Icons.sync,
               text: "JOIN TEAM",
-              backgroundColor: const Color(0xFFE8F5E9),
+              backgroundColor: const Color.fromARGB(255, 250, 251, 250),
               iconColor: Colors.green,
               textColor: Colors.green,
               onTap: () => _showJoinRoomDialog(context),
